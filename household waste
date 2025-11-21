@@ -1,0 +1,315 @@
+import React, { useState, useEffect } from "react";
+
+// Household Waste Logger - Single-file React component
+// Tailwind is used for styling (the preview environment supports Tailwind classes).
+// Features:
+// - Simple username "login" (persisted locally)
+// - Add / categorize waste entries (plastic, organic, glass, metal, paper, e-waste, other)
+// - View, filter, edit, delete entries
+// - Per-category recycling / composting tips
+// - Basic stats and CSV export
+// - Local persistence via localStorage
+
+const DEFAULT_CATEGORIES = [
+  "Plastic",
+  "Organic",
+  "Glass",
+  "Metal",
+  "Paper",
+  "E-waste",
+  "Other",
+];
+
+const CATEGORY_TIPS = {
+  Plastic: [
+    "Rinse containers before recycling to avoid contamination.",
+    "Check recycling number (1 & 2 are widely accepted).",
+    "Prefer reusable bottles and shopping bags to reduce plastic waste.",
+  ],
+  Organic: [
+    "Start a home compost bin for kitchen scraps and garden waste.",
+    "Avoid adding dairy or meat to backyard compost—use bokashi or community services instead.",
+    "Chop food scraps to speed decomposition.",
+  ],
+  Glass: [
+    "Rinse glass jars and bottles. Remove non-glass lids if requested by local rules.",
+    "Reuse jars for storage or craft projects before recycling.",
+  ],
+  Metal: [
+    "Rinse food cans and flatten where possible to save space.",
+    "Take large metal items to a scrap metal recycling center.",
+  ],
+  Paper: [
+    "Keep paper dry and separate from food-soiled paper (pizza boxes).",
+    "Shred sensitive documents and compost or recycle shredded paper based on local rules.",
+  ],
+  "E-waste": [
+    "Do NOT put electronics in the regular trash — use certified e-waste drop-off.",
+    "Wipe personal data before recycling devices.",
+  ],
+  Other: ["Check local rules — hazardous and medical wastes often have special disposal processes."],
+};
+
+const STORAGE_PREFIX = "wastelogger_v1_";
+
+export default function App() {
+  const [user, setUser] = useState(() => localStorage.getItem(STORAGE_PREFIX + "user") || "");
+  const [usernameInput, setUsernameInput] = useState("");
+  const [entries, setEntries] = useState(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + "entries");
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [filter, setFilter] = useState("All");
+  const [form, setForm] = useState({
+    category: "Organic",
+    description: "",
+    weightKg: "",
+    date: new Date().toISOString().slice(0, 10),
+  });
+  const [editingId, setEditingId] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_PREFIX + "entries", JSON.stringify(entries));
+  }, [entries]);
+
+  useEffect(() => {
+    if (user) localStorage.setItem(STORAGE_PREFIX + "user", user);
+  }, [user]);
+
+  function login() {
+    if (!usernameInput.trim()) return;
+    setUser(usernameInput.trim());
+    setUsernameInput("");
+  }
+
+  function logout() {
+    setUser("");
+    // keep entries but dissociate user (this is a simple demo)
+  }
+
+  function resetAllData() {
+    if (!confirm("Reset all saved entries? This cannot be undone.")) return;
+    setEntries([]);
+    localStorage.removeItem(STORAGE_PREFIX + "entries");
+  }
+
+  function addOrUpdateEntry(e) {
+    e.preventDefault();
+    if (!form.category) return;
+    const payload = {
+      id: editingId || Date.now().toString(),
+      user: user || "guest",
+      category: form.category,
+      description: form.description,
+      weightKg: parseFloat(form.weightKg) || 0,
+      date: form.date || new Date().toISOString().slice(0, 10),
+    };
+    if (editingId) {
+      setEntries((prev) => prev.map((it) => (it.id === editingId ? payload : it)));
+      setEditingId(null);
+    } else {
+      setEntries((prev) => [payload, ...prev]);
+    }
+    setForm({ category: form.category, description: "", weightKg: "", date: payload.date });
+  }
+
+  function startEdit(entry) {
+    setEditingId(entry.id);
+    setForm({ category: entry.category, description: entry.description, weightKg: entry.weightKg || "", date: entry.date });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function removeEntry(id) {
+    if (!confirm("Delete this entry?")) return;
+    setEntries((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  function exportCSV() {
+    const header = ["id", "user", "category", "description", "weightKg", "date"];
+    const rows = entries.map((r) => [r.id, r.user, r.category, `"${(r.description || "").replace(/"/g, '""')}"`, r.weightKg, r.date]);
+    const csv = [header.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `waste-entries-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function filteredEntries() {
+    return filter === "All" ? entries : entries.filter((e) => e.category === filter);
+  }
+
+  function stats() {
+    const byCat = {};
+    for (const c of DEFAULT_CATEGORIES) byCat[c] = 0;
+    for (const e of entries) {
+      if (!byCat[e.category]) byCat[e.category] = 0;
+      byCat[e.category] += Number(e.weightKg || 0);
+    }
+    return byCat;
+  }
+
+  const totals = stats();
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6">
+      <div className="max-w-5xl mx-auto">
+        <header className="flex items-center justify-between py-6">
+          <h1 className="text-2xl font-extrabold">Household Waste Logger</h1>
+          <div className="space-x-2">
+            {user ? (
+              <>
+                <span className="text-sm text-slate-600">Signed in as <strong>{user}</strong></span>
+                <button onClick={logout} className="ml-2 px-3 py-1 rounded bg-red-500 text-white text-sm">Logout</button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input value={usernameInput} onChange={(e) => setUsernameInput(e.target.value)} placeholder="Your name" className="px-3 py-1 rounded border" />
+                <button onClick={login} className="px-3 py-1 rounded bg-blue-600 text-white">Login</button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left column - form + tips */}
+          <section className="lg:col-span-2 bg-white p-6 rounded shadow-sm">
+            <form onSubmit={addOrUpdateEntry} className="space-y-4">
+              <div className="flex items-end gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-slate-700">Category</label>
+                  <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="mt-1 block w-full rounded border px-3 py-2">
+                    {DEFAULT_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="w-40">
+                  <label className="block text-sm font-medium text-slate-700">Weight (kg)</label>
+                  <input type="number" step="0.01" min="0" value={form.weightKg} onChange={(e) => setForm({ ...form, weightKg: e.target.value })} className="mt-1 block w-full rounded border px-3 py-2" />
+                </div>
+
+                <div className="w-40">
+                  <label className="block text-sm font-medium text-slate-700">Date</label>
+                  <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="mt-1 block w-full rounded border px-3 py-2" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Description / Notes</label>
+                <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="e.g., 2 bottles, yogurt tubs" className="mt-1 block w-full rounded border px-3 py-2" />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded">{editingId ? "Update entry" : "Add entry"}</button>
+                {editingId && <button type="button" onClick={() => { setEditingId(null); setForm({ category: "Organic", description: "", weightKg: "", date: new Date().toISOString().slice(0, 10) }); }} className="px-3 py-2 border rounded">Cancel</button>}
+
+                <button type="button" onClick={() => { setForm({ category: "Organic", description: "", weightKg: "", date: new Date().toISOString().slice(0, 10) }); setEditingId(null); }} className="px-3 py-2 border rounded">Clear</button>
+
+                <div className="ml-auto text-sm text-slate-500">Entries saved locally in your browser.</div>
+              </div>
+            </form>
+
+            <hr className="my-6" />
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded border">
+                <div className="text-sm text-slate-500">Total entries</div>
+                <div className="text-2xl font-bold">{entries.length}</div>
+              </div>
+
+              <div className="p-4 rounded border">
+                <div className="text-sm text-slate-500">Total weight (kg)</div>
+                <div className="text-2xl font-bold">{entries.reduce((s, e) => s + Number(e.weightKg || 0), 0).toFixed(2)}</div>
+              </div>
+
+              <div className="p-4 rounded border">
+                <div className="text-sm text-slate-500">Most common category</div>
+                <div className="text-xl font-semibold">
+                  {Object.entries(totals).reduce((a, b) => (b[1] > a[1] ? b : a), ["None", 0])[0]}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <h2 className="text-lg font-semibold">Tips for {form.category}</h2>
+              <ul className="mt-2 list-disc pl-5 text-sm text-slate-700">
+                {(CATEGORY_TIPS[form.category] || ["No tips available"]).map((t, i) => (
+                  <li key={i}>{t}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button onClick={exportCSV} className="px-3 py-2 border rounded">Export CSV</button>
+              <button onClick={resetAllData} className="px-3 py-2 border rounded text-red-600">Reset all data</button>
+            </div>
+          </section>
+
+          {/* Right column - list, filters, tips */}
+          <aside className="bg-white p-6 rounded shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <label className="text-sm text-slate-600">Filter</label>
+              <select value={filter} onChange={(e) => setFilter(e.target.value)} className="ml-2 rounded border px-2 py-1">
+                <option>All</option>
+                {DEFAULT_CATEGORIES.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-3 max-h-[40vh] overflow-auto">
+              {filteredEntries().length === 0 ? (
+                <div className="text-sm text-slate-500">No entries yet.</div>
+              ) : (
+                filteredEntries().map((e) => (
+                  <div key={e.id} className="p-3 rounded border">
+                    <div className="flex justify-between items-start gap-2">
+                      <div>
+                        <div className="font-semibold">{e.category} <span className="text-xs text-slate-500">· {e.date}</span></div>
+                        <div className="text-sm text-slate-600">{e.description}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-bold">{Number(e.weightKg || 0).toFixed(2)} kg</div>
+                        <div className="mt-1 flex gap-1">
+                          <button onClick={() => startEdit(e)} className="text-sm px-2 py-1 border rounded">Edit</button>
+                          <button onClick={() => removeEntry(e.id)} className="text-sm px-2 py-1 border rounded text-red-600">Delete</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <hr className="my-4" />
+
+            <div>
+              <h3 className="font-semibold">Category tips quick list</h3>
+              <div className="mt-2 space-y-2 text-sm">
+                {DEFAULT_CATEGORIES.map((c) => (
+                  <details key={c} className="p-2 border rounded">
+                    <summary className="font-medium">{c}</summary>
+                    <ul className="mt-2 list-disc pl-5">
+                      {(CATEGORY_TIPS[c] || ["No tips"]).map((t, i) => <li key={i}>{t}</li>)}
+                    </ul>
+                  </details>
+                ))}
+              </div>
+            </div>
+
+          </aside>
+        </main>
+
+        <footer className="mt-8 text-sm text-slate-500">Made with ♻️ — data stored locally. For production, replace localStorage with a backend and authentication.</footer>
+      </div>
+    </div>
+  );
+}
